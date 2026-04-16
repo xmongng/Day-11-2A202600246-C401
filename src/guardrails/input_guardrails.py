@@ -38,9 +38,9 @@ def detect_injection(user_input: str) -> bool:
         True if injection detected, False otherwise
     """
     INJECTION_PATTERNS = [
-      # 1. Classic injection commands                                                                                   
+      # 1. Classic injection commands
       r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions",
-      r"disregard\s+(all\s+)?(previous|prior|above)\s+(instructions|rules)",                                            
+      r"disregard\s+(all\s+)?(previous|prior|above)\s+(instructions|rules)",
       r"override\s+(your\s+)?(system\s+)?(prompt|instructions)",
       r"forget\s+(all\s+)?(your\s+)?instructions",
 
@@ -48,23 +48,39 @@ def detect_injection(user_input: str) -> bool:
       r"you\s+are\s+now\s+",
       r"pretend\s+you\s+are",
       r"act\s+as\s+(a|an)?\s*(unrestricted|jailbroken|DAN)",
-      r"roleplay\s+as",   
-      r"now\s+called\s+DAN",       
+      r"roleplay\s+as",
+      r"now\s+called\s+DAN",
 
-      # 3. Prompt extraction attempts                                                                                   
+      # 3. Prompt extraction attempts
       r"(reveal|show|tell|print)\s+(your\s+)?(system\s+)?prompt",
-      r"(reveal|show|tell)\s+your\s+instructions",                                                                      
+      r"(reveal|show|tell)\s+your\s+instructions",
       r"output\s+your\s+config(uration)?",
       r"show\s+the\s+(system\s+)?(prompt|instructions)",
 
       # 4. Jailbreak patterns
       r"(Bỏ qua|ignore)\s+(tất cả|mọi)\s+(hướng dẫn|instructions)",
       r"bypass\s+(your\s+)?safety",
-      r"disable\s+(your\s+)?(safety|filter)",                                                                           
+      r"disable\s+(your\s+)?(safety|filter)",
       r"\[\s*INST\s*\]",   # Bracketed instructions like [INST]
-      r"<\s*system\s*>",   # XML-style override tags                                                                    
+      r"<\s*system\s*>",   # XML-style override tags
       r"{{.*}}",           # Template injection
-  ]
+
+      # 5. Completion / Fill-in-the-blank attacks (Assignment 11 Test 2)
+      r"fill\s+in\s*:",
+      r"(the\s+)?(password|api\s*key|database|connection|string|secret)\s*(is|are|:)\s*__",
+      r"complete\s+the\s+(following\s+)?(config|password|key|credential)",
+
+      # 6. System prompt extraction via translation/reformatting
+      r"translate\s+(your\s+)?(system\s+)?prompt",
+      r"translate\s+(your\s+)?(internal\s+)?(config|rules|instructions)",
+      r"output\s+(your\s+)?(system\s+)?(config|instructions)\s+as\s+(json|yaml|xml)",
+      r"(export|convert|encode)\s+(your\s+)?(config|prompt|instructions)\s+to\s+(json|yaml|xml)",
+
+      # 7. Creative / indirect credential extraction
+      r"(knows|has|same\s+as)\s+(the\s+same\s+)?(passwords|credentials|secrets|keys)\s+as\s+you",
+      r"character\s+(with|knows|has)\s+(password|api|secret|credential)",
+      r"share\s+(your\s+)?(passwords|secrets|credentials|keys)\s+with",
+    ]
 
     for pattern in INJECTION_PATTERNS:
         if re.search(pattern, user_input, re.IGNORECASE):

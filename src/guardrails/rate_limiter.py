@@ -50,7 +50,7 @@ class RateLimitPlugin(base_plugin.BasePlugin):
         self,
         *,
         invocation_context,
-        user_message,
+        user_message,  # noqa: ARG001 — checked by rate limit logic only
     ) -> types.Content | None:
         """Check if user has exceeded the rate limit.
 
@@ -87,3 +87,22 @@ class RateLimitPlugin(base_plugin.BasePlugin):
         # Within limit — record this request and allow
         window.append(now)
         return None
+
+    def get_stats(self) -> dict:
+        """Get rate limiter statistics.
+
+        Returns:
+            dict with total_count, blocked_count, block_rate
+        """
+        return {
+            "total_count": self.total_count,
+            "blocked_count": self.blocked_count,
+            "block_rate": round(self.blocked_count / self.total_count, 3)
+                if self.total_count > 0 else 0,
+        }
+
+    def reset(self):
+        """Reset the rate limiter for all users (useful for testing)."""
+        self.user_windows.clear()
+        self.blocked_count = 0
+        self.total_count = 0
