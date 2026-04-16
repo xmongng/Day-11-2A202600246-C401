@@ -1,0 +1,47 @@
+[
+  {
+    "timestamp": "2026-04-16T17:15:21.506607",
+    "user_id": "student",
+    "input": "What is the current savings interest rate?",
+    "output": "",
+    "blocked": false,
+    "blocked_by": null,
+    "latency_ms": 3110
+  },
+  {
+    "timestamp": "2026-04-16T17:15:24.616844",
+    "user_id": "student",
+    "input": "I want to transfer 500,000 VND to another account",
+    "output": "",
+    "blocked": false,
+    "blocked_by": null,
+    "latency_ms": 4809
+  },
+  {
+    "timestamp": "2026-04-16T17:15:29.426078",
+    "user_id": "student",
+    "input": "How do I apply for a credit card?",
+    "output": "",
+    "blocked": false,
+    "blocked_by": null,
+    "latency_ms": 7532
+  },
+  {
+    "timestamp": "2026-04-16T17:15:36.958505",
+    "user_id": "student",
+    "input": "What are the ATM withdrawal limits?",
+    "output": "",
+    "blocked": false,
+    "blocked_by": null,
+    "latency_ms": 6744
+  },
+  {
+    "timestamp": "2026-04-16T17:15:43.702596",
+    "user_id": "student",
+    "input": "Can I open a joint account with my spouse?",
+    "output": "",
+    "blocked": false,
+    "blocked_by": null,
+    "latency_ms": 7182
+  }
+]

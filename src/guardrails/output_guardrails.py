@@ -8,9 +8,11 @@ import re
 import textwrap
 
 from google.genai import types
-from google.adk.agents import llm_agent
-from google.adk import runners
 from google.adk.plugins import base_plugin
+
+from core.utils import chat_with_agent
+import os
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
 from core.utils import chat_with_agent
 
@@ -41,25 +43,28 @@ def content_filter(response: str) -> dict:
 
     # PII patterns to check
     PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
-    }
+      "VN_phone": r"\b0\d{9,10}\b",                    # 0901234567
+      "email": r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}",
+      "national_id_9": r"\b\d{9}\b",                   # 9-digit ID (CMND)
+      "national_id_12": r"\b\d{12}\b",                 # 12-digit ID (CCCD)
+      "api_key": r"sk-[a-zA-Z0-9-]{10,}",             # sk-vinbank-secret-2024                                          
+      "password": r"password\s*[:=]\s*\S+",
+      "admin_password": r"(admin\s+)?password\s*(is|is:)?\s*['\"]?\w+['\"]?",                                           
+      "internal_host": r"[\w-]+\.internal\b",           # db.vinbank.internal
+      "ip_address": r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
+  } 
 
     for name, pattern in PII_PATTERNS.items():
-        matches = re.findall(pattern, response, re.IGNORECASE)
-        if matches:
-            issues.append(f"{name}: {len(matches)} found")
-            redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
-
+      matches = re.findall(pattern, response, re.IGNORECASE)
+      if matches:         
+          issues.append(f"{name}: {len(matches)} found(s)")
+          redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+                                                                                                                        
     return {
-        "safe": len(issues) == 0,
-        "issues": issues,
-        "redacted": redacted,
-    }
+      "safe": len(issues) == 0,                                                                                         
+      "issues": issues,                  
+      "redacted": redacted,
+  }
 
 
 # ============================================================
@@ -89,25 +94,25 @@ Respond with ONLY one word: SAFE or UNSAFE
 If UNSAFE, add a brief reason on the next line.
 """
 
-# TODO: Create safety_judge_agent using LlmAgent
-# Hint:
-# safety_judge_agent = llm_agent.LlmAgent(
-#     model="gemini-2.0-flash",
-#     name="safety_judge",
-#     instruction=SAFETY_JUDGE_INSTRUCTION,
-# )
+try:
+    safety_judge_agent = ChatNVIDIA(
+        model="openai/gpt-oss-120b",
+        api_key=os.environ.get("NVIDIA_API_KEY", ""),
+        temperature=1,
+        top_p=1,
+        max_tokens=4096,
+    )
+except Exception:
+    safety_judge_agent = None
 
-safety_judge_agent = None  # TODO: Replace with implementation
 judge_runner = None
 
 
 def _init_judge():
-    """Initialize the judge agent and runner (call after creating the agent)."""
+    """Initialize the judge context."""
     global judge_runner
     if safety_judge_agent is not None:
-        judge_runner = runners.InMemoryRunner(
-            agent=safety_judge_agent, app_name="safety_judge"
-        )
+        judge_runner = {"instruction": SAFETY_JUDGE_INSTRUCTION, "plugins": []}
 
 
 async def llm_safety_check(response_text: str) -> dict:
@@ -141,7 +146,20 @@ async def llm_safety_check(response_text: str) -> dict:
 # ============================================================
 
 class OutputGuardrailPlugin(base_plugin.BasePlugin):
-    """Plugin that checks agent output before sending to user."""
+    """Plugin that checks agent output before sending to user.
+    
+    What does this component do?
+        It intercepts the LLM's response before it reaches the user. It applies
+        a regex-based PII/secret content filter to mask sensitive data, and then
+        runs an LLM-as-Judge to evaluate the response for safety. If unsafe, it
+        blocks the response entirely.
+        
+    Why is it needed?
+        It acts as the final safety net (Layer 4). If an attacker manages to bypass
+        the input guardrails and tricks the LLM into generating malicious content or 
+        revealing secrets, this layer catches the leak. It catches data exfiltration
+        that input guardrails cannot detect (since input guardrails don't see the output).
+    """
 
     def __init__(self, use_llm_judge=True):
         super().__init__(name="output_guardrail")
@@ -159,29 +177,43 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
                     text += part.text
         return text
 
-    async def after_model_callback(
-        self,
-        *,
-        callback_context,
-        llm_response,
-    ):
-        """Check LLM response before sending to user."""
-        self.total_count += 1
+    async def after_model_callback(  
+      self,
+      *,                                                                                                                
+      callback_context,
+      llm_response,                                                                                                     
+    ):                                     
+      """Check LLM response before sending to user."""
+      self.total_count += 1
 
-        response_text = self._extract_text(llm_response)
-        if not response_text:
-            return llm_response
+      response_text = self._extract_text(llm_response)
+      if not response_text:
+          return llm_response
 
-        # TODO: Implement logic:
-        # 1. Call content_filter(response_text)
-        #    - If issues found: replace llm_response.content with redacted version
-        #    - Increment self.redacted_count
-        # 2. If use_llm_judge: call llm_safety_check(response_text)
-        #    - If unsafe: replace llm_response.content with a safe message
-        #    - Increment self.blocked_count
-        # 3. Return llm_response (possibly modified)
+      # Step 1: Content filter (regex-based PII/secrets)
+      filter_result = content_filter(response_text)
+      if not filter_result["safe"]:
+          self.redacted_count += 1
+          # Replace the response content with redacted version
+          if hasattr(llm_response, "content") and llm_response.content:
+              llm_response.content.parts[0].text = filter_result["redacted"]
+          print(f"  [REDACTED] {filter_result['issues']}")
+                                   
+      # Step 2: LLM judge (deep safety check)
+      if self.use_llm_judge:                                                                                            
+          safety_result = await llm_safety_check(response_text)
+          if not safety_result["safe"]:                                                                                 
+              self.blocked_count += 1    
+              safe_message = types.Content(
+                  role="model",
+                  parts=[types.Part.from_text(
+                      text="I'm sorry, but I cannot provide that response. "
+                           "Please contact VinBank support directly."
+                  )],
+              )
+              return safe_message  # Full replacement
 
-        return llm_response  # TODO: modify if needed
+      return llm_response
 
 
 # ============================================================

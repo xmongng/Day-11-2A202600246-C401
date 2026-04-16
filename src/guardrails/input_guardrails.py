@@ -38,10 +38,33 @@ def detect_injection(user_input: str) -> bool:
         True if injection detected, False otherwise
     """
     INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
-    ]
+      # 1. Classic injection commands                                                                                   
+      r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions",
+      r"disregard\s+(all\s+)?(previous|prior|above)\s+(instructions|rules)",                                            
+      r"override\s+(your\s+)?(system\s+)?(prompt|instructions)",
+      r"forget\s+(all\s+)?(your\s+)?instructions",
+
+      # 2. Role assumption / persona attacks
+      r"you\s+are\s+now\s+",
+      r"pretend\s+you\s+are",
+      r"act\s+as\s+(a|an)?\s*(unrestricted|jailbroken|DAN)",
+      r"roleplay\s+as",   
+      r"now\s+called\s+DAN",       
+
+      # 3. Prompt extraction attempts                                                                                   
+      r"(reveal|show|tell|print)\s+(your\s+)?(system\s+)?prompt",
+      r"(reveal|show|tell)\s+your\s+instructions",                                                                      
+      r"output\s+your\s+config(uration)?",
+      r"show\s+the\s+(system\s+)?(prompt|instructions)",
+
+      # 4. Jailbreak patterns
+      r"(Bỏ qua|ignore)\s+(tất cả|mọi)\s+(hướng dẫn|instructions)",
+      r"bypass\s+(your\s+)?safety",
+      r"disable\s+(your\s+)?(safety|filter)",                                                                           
+      r"\[\s*INST\s*\]",   # Bracketed instructions like [INST]
+      r"<\s*system\s*>",   # XML-style override tags                                                                    
+      r"{{.*}}",           # Template injection
+  ]
 
     for pattern in INJECTION_PATTERNS:
         if re.search(pattern, user_input, re.IGNORECASE):
@@ -59,23 +82,22 @@ def detect_injection(user_input: str) -> bool:
 # Return True if input should be BLOCKED (off-topic or blocked topic).
 # ============================================================
 
-def topic_filter(user_input: str) -> bool:
-    """Check if input is off-topic or contains blocked topics.
+def topic_filter(user_input: str) -> bool:                                                                            
+      """Check if input is off-topic or contains blocked topics."""
+      input_lower = user_input.lower()
 
-    Args:
-        user_input: The user's message
+      # 1. Check blocked topics FIRST (immediate reject)
+      for blocked in BLOCKED_TOPICS:
+          if blocked in input_lower:
+              return True  # BLOCK
 
-    Returns:
-        True if input should be BLOCKED (off-topic or blocked topic)
-    """
-    input_lower = user_input.lower()
+      # 2. Check allowed topics
+      has_allowed = any(topic in input_lower for topic in ALLOWED_TOPICS)
+      if not has_allowed:
+          return True  # BLOCK (off-topic)
 
-    # TODO: Implement logic:
-    # 1. If input contains any blocked topic -> return True
-    # 2. If input doesn't contain any allowed topic -> return True
-    # 3. Otherwise -> return False (allow)
-
-    pass  # Replace with your implementation
+      # 3. Otherwise → allow
+      return False
 
 
 # ============================================================
@@ -90,7 +112,20 @@ def topic_filter(user_input: str) -> bool:
 # ============================================================
 
 class InputGuardrailPlugin(base_plugin.BasePlugin):
-    """Plugin that blocks bad input before it reaches the LLM."""
+    """Plugin that blocks bad input before it reaches the LLM.
+    
+    What does this component do?
+        It intercepts the user's message before sending it to the LLM. It applies
+        regex-based injection detection and topic filtering. If either check fails,
+        it blocks the request and returns a safe fallback message.
+        
+    Why is it needed?
+        This is the first line of defense (Layer 2) against adversarial inputs.
+        It catches raw prompt injection attempts (e.g., "ignore all instructions")
+        and off-topic queries (e.g., "how to cook") before the LLM wastes compute
+        processing them. This catches attacks that rate-limiting would miss (since
+        it blocks based on content, not frequency).
+    """
 
     def __init__(self):
         super().__init__(name="input_guardrail")
@@ -114,28 +149,35 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         )
 
     async def on_user_message_callback(
-        self,
-        *,
-        invocation_context: InvocationContext,
-        user_message: types.Content,
-    ) -> types.Content | None:
-        """Check user message before sending to the agent.
+      self,
+      *,
+      invocation_context: InvocationContext,
+      user_message: types.Content,
+  ) -> types.Content | None:
+      """Check user message before sending to the LLM."""
+      self.total_count += 1
+      text = self._extract_text(user_message)
 
-        Returns:
-            None if message is safe (let it through),
-            types.Content if message is blocked (return replacement)
-        """
-        self.total_count += 1
-        text = self._extract_text(user_message)
+      # Check 1: Injection detection                                                                                    
+      if detect_injection(text):
+          self.blocked_count += 1                                                                                       
+          print(f"  [BLOCKED] Injection detected in: {text[:60]}...")
+          return self._block_response(
+              "I'm sorry, but I cannot process that message. "
+              "It appears to contain instructions that conflict with my guidelines."
+          )
 
-        # TODO: Implement logic:
-        # 1. Call detect_injection(text)
-        #    - If True: increment blocked_count, return self._block_response("...")
-        # 2. Call topic_filter(text)
-        #    - If True: increment blocked_count, return self._block_response("...")
-        # 3. If both are False: return None (let message through)
-
-        pass  # Replace with your implementation
+      # Check 2: Topic filter
+      if topic_filter(text):
+          self.blocked_count += 1
+          print(f"  [BLOCKED] Off-topic/blocked content: {text[:60]}...")
+          return self._block_response(
+              "I'm a VinBank assistant and can only help with "
+              "banking-related questions. How can I assist you with your account?"
+          )               
+                                   
+      # Both checks passed → let message through
+      return None
 
 
 # ============================================================
